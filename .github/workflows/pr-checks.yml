@@ -67,7 +67,7 @@ jobs:
       - name: Run ktlint check
         id: ktlint
         run: |
-          ./mvnw exec:exec@ktlint-check -pl app
+          ./mvnw exec:exec@ktlint-check -pl app 2>&1 | tee app/target/reports/ktlint.txt
         continue-on-error: true
 
       - name: Upload ktlint HTML Report
@@ -92,18 +92,33 @@ jobs:
           echo "## 🎨 ktlint Code Style" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          if [ -f app/target/reports/ktlint.html ]; then
-            echo "✅ HTML report generated - download from Artifacts" >> $GITHUB_STEP_SUMMARY
-          fi
+          if [ -f app/target/reports/ktlint.txt ]; then
+            # Count issues from ktlint output (lines matching file:line:col pattern)
+            issue_count=$(grep -cE '\.kt:[0-9]+:[0-9]+:' app/target/reports/ktlint.txt 2>/dev/null || echo "0")
 
-          if [ "${{ steps.ktlint.outcome }}" == "success" ]; then
-            echo "### ✅ No style issues found" >> $GITHUB_STEP_SUMMARY
+            if [ "$issue_count" -gt 0 ]; then
+              echo "### ⚠️ Found $issue_count style issues" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+
+              echo "| File | Line | Column | Issue |" >> $GITHUB_STEP_SUMMARY
+              echo "|------|------|--------|-------|" >> $GITHUB_STEP_SUMMARY
+
+              grep -E '\.kt:[0-9]+:[0-9]+:' app/target/reports/ktlint.txt | head -50 | while read -r line; do
+                file=$(echo "$line" | sed 's/.*\/\([^/]*\.kt\):.*/\1/')
+                location=$(echo "$line" | grep -oE '\.kt:[0-9]+:[0-9]+' | sed 's/\.kt://')
+                line_num=$(echo "$location" | cut -d: -f1)
+                col_num=$(echo "$location" | cut -d: -f2)
+                msg=$(echo "$line" | sed 's/.*\.kt:[0-9]*:[0-9]*: //')
+                echo "| \`$file\` | $line_num | $col_num | $msg |" >> $GITHUB_STEP_SUMMARY
+              done
+
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Fix command:** \`./mvnw exec:exec@ktlint-format -pl app\`" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "### ✅ No style issues found" >> $GITHUB_STEP_SUMMARY
+            fi
           else
-            echo "### ⚠️ Style issues detected" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "📥 Download the **ktlint-html-report** artifact for details" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Fix command:** \`./mvnw exec:exec@ktlint-format -pl app\`" >> $GITHUB_STEP_SUMMARY
+            echo "### ⚠️ No ktlint report generated" >> $GITHUB_STEP_SUMMARY
           fi
 
   detekt:
