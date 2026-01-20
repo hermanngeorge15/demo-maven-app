@@ -1,0 +1,210 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [ main, master, develop ]
+  push:
+    branches: [ main, master, develop ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build and Test
+        run: ./mvnw clean verify -DskipTests=false
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: '**/target/surefire-reports/*.xml'
+
+  ktlint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Run ktlint check (without format)
+        id: ktlint
+        run: |
+          # Run ktlint in check mode (no --format flag)
+          ./mvnw exec:exec@ktlint-check -pl app 2>&1 | tee ktlint-output.txt
+          exit_code=${PIPESTATUS[0]}
+          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
+          exit $exit_code
+        continue-on-error: true
+
+      - name: Comment PR with ktlint results
+        if: github.event_name == 'pull_request' && steps.ktlint.outputs.exit_code != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const output = fs.readFileSync('ktlint-output.txt', 'utf8');
+
+            // Parse ktlint output
+            const issues = output.split('\n')
+              .filter(line => line.includes('.kt:'))
+              .slice(0, 20); // Limit to 20 issues
+
+            if (issues.length > 0) {
+              const body = `## ❌ ktlint Check Failed
+
+            The following code style issues were found:
+
+            \`\`\`
+            ${issues.join('\n')}
+            \`\`\`
+
+            **To fix automatically, run:**
+            \`\`\`bash
+            ./mvnw exec:exec@ktlint-format -pl app
+            \`\`\`
+
+            Or fix manually according to the [ktlint rules](https://pinterest.github.io/ktlint/latest/rules/standard/).`;
+
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+            }
+
+      - name: Fail if ktlint found issues
+        if: steps.ktlint.outputs.exit_code != '0'
+        run: exit 1
+
+  detekt:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Run detekt
+        id: detekt
+        run: |
+          ./mvnw antrun:run@detekt -pl app 2>&1 | tee detekt-output.txt
+          exit_code=${PIPESTATUS[0]}
+          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
+          # Don't fail yet, we want to post the comment first
+        continue-on-error: true
+
+      - name: Parse detekt results
+        id: parse-detekt
+        if: always()
+        run: |
+          # Count issues from output
+          issue_count=$(grep -c '\[detekt\].*\[' detekt-output.txt || echo "0")
+          echo "issue_count=$issue_count" >> $GITHUB_OUTPUT
+
+      - name: Comment PR with detekt results
+        if: github.event_name == 'pull_request' && steps.parse-detekt.outputs.issue_count != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const output = fs.readFileSync('detekt-output.txt', 'utf8');
+
+            // Parse detekt output - extract issues
+            const issues = output.split('\n')
+              .filter(line => line.includes('[detekt]') && line.includes('[') && line.includes(']'))
+              .filter(line => line.includes('.kt:'))
+              .map(line => line.replace('[INFO]', '').trim())
+              .slice(0, 30); // Limit to 30 issues
+
+            // Group by type
+            const issueTypes = {};
+            issues.forEach(issue => {
+              const match = issue.match(/\[(\w+)\]$/);
+              if (match) {
+                const type = match[1];
+                issueTypes[type] = (issueTypes[type] || 0) + 1;
+              }
+            });
+
+            const summary = Object.entries(issueTypes)
+              .map(([type, count]) => `- **${type}**: ${count}`)
+              .join('\n');
+
+            const body = `## ⚠️ detekt Analysis Results
+
+            Found **${issues.length}** code quality issues:
+
+            ### Summary by Type:
+            ${summary}
+
+            ### Issues (first 30):
+            \`\`\`
+            ${issues.join('\n')}
+            \`\`\`
+
+            **To see full report, check the workflow logs or run locally:**
+            \`\`\`bash
+            ./mvnw antrun:run@detekt -pl app
+            \`\`\`
+
+            See [detekt documentation](https://detekt.dev/docs/rules/style) for fixing these issues.`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Upload detekt report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: detekt-report
+          path: '**/target/reports/detekt.xml'
+          if-no-files-found: ignore
+
+  test-report:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: always()
+
+    steps:
+      - name: Download test results
+        uses: actions/download-artifact@v4
+        with:
+          name: test-results
+          path: test-results
+
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: test-results/**/*.xml
+          comment_mode: 'failures'
