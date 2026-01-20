@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>org.springframework.boot</groupId>
+		<artifactId>spring-boot-starter-parent</artifactId>
+		<version>3.5.9</version>
+		<relativePath/> <!-- lookup parent from repository -->
+	</parent>
+	<groupId>com.kss.proj</groupId>
+	<artifactId>demo-maven-app</artifactId>
+	<version>0.0.1-SNAPSHOT</version>
+	<packaging>pom</packaging>
+	<name>demo-maven-app</name>
+	<description>demo-maven-app</description>
+	<url/>
+	<licenses>
+		<license/>
+	</licenses>
+	<developers>
+		<developer/>
+	</developers>
+	<scm>
+		<connection/>
+		<developerConnection/>
+		<tag/>
+		<url/>
+	</scm>
+
+	<modules>
+		<module>app</module>
+	</modules>
+
+	<properties>
+		<java.version>21</java.version>
+		<kotlin.version>1.9.25</kotlin.version>
+	</properties>
+
+	<dependencyManagement>
+		<dependencies>
+			<dependency>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-dependencies</artifactId>
+				<version>3.5.9</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
+
+	<build>
+		<!-- V parentu necháme jen pluginManagement pro sdílené pluginy (ktlint, detekt, atd.).
+			 Aplikace samotná bude mít konkrétní konfiguraci v app/pom.xml. -->
+		<pluginManagement>
+			<plugins>
+				<plugin>
+					<groupId>org.jetbrains.kotlin</groupId>
+					<artifactId>kotlin-maven-plugin</artifactId>
+					<configuration>
+						<args>
+							<arg>-Xjsr305=strict</arg>
+						</args>
+						<compilerPlugins>
+							<plugin>spring</plugin>
+						</compilerPlugins>
+					</configuration>
+					<dependencies>
+						<dependency>
+							<groupId>org.jetbrains.kotlin</groupId>
+							<artifactId>kotlin-maven-allopen</artifactId>
+							<version>${kotlin.version}</version>
+						</dependency>
+					</dependencies>
+				</plugin>
+
+				<plugin>
+					<groupId>org.codehaus.mojo</groupId>
+					<artifactId>exec-maven-plugin</artifactId>
+					<version>3.5.0</version>
+					<executions>
+						<!-- ktlint format - auto-fixes issues during local development -->
+						<execution>
+							<id>ktlint-format</id>
+							<phase>validate</phase>
+							<goals>
+								<goal>exec</goal>
+							</goals>
+							<configuration>
+								<executable>java</executable>
+								<includePluginDependencies>true</includePluginDependencies>
+								<arguments>
+									<argument>-classpath</argument>
+									<classpath/>
+									<argument>com.pinterest.ktlint.Main</argument>
+									<argument>--format</argument>
+									<argument>--relative</argument>
+									<argument>src/**/*.kt</argument>
+								</arguments>
+							</configuration>
+						</execution>
+						<!-- ktlint check - only reports issues, for CI -->
+						<execution>
+							<id>ktlint-check</id>
+							<phase>none</phase>
+							<goals>
+								<goal>exec</goal>
+							</goals>
+							<configuration>
+								<executable>java</executable>
+								<includePluginDependencies>true</includePluginDependencies>
+								<arguments>
+									<argument>-classpath</argument>
+									<classpath/>
+									<argument>com.pinterest.ktlint.Main</argument>
+									<argument>--relative</argument>
+									<argument>src/**/*.kt</argument>
+								</arguments>
+							</configuration>
+						</execution>
+					</executions>
+					<dependencies>
+						<dependency>
+							<groupId>com.pinterest.ktlint</groupId>
+							<artifactId>ktlint-cli</artifactId>
+							<version>1.8.0</version>
+							<classifier>all</classifier>
+							<type>jar</type>
+						</dependency>
+						<dependency>
+							<groupId>com.pinterest.ktlint</groupId>
+							<artifactId>ktlint-ruleset-standard</artifactId>
+							<version>1.8.0</version>
+						</dependency>
+					</dependencies>
+				</plugin>
+
+				<plugin>
+					<groupId>org.apache.maven.plugins</groupId>
+					<artifactId>maven-antrun-plugin</artifactId>
+					<version>3.1.0</version>
+					<executions>
+						<execution>
+							<id>detekt</id>
+							<phase>verify</phase>
+							<configuration>
+								<target name="detekt">
+									<java taskname="detekt" dir="${basedir}"
+									      fork="true"
+									      failonerror="true"
+									      classname="io.gitlab.arturbosch.detekt.cli.Main"
+									      classpathref="maven.plugin.classpath">
+										<arg value="--input"/>
+										<arg value="${basedir}/src/main/kotlin"/>
+										<arg value="--report"/>
+										<arg value="xml:${basedir}/target/reports/detekt.xml"/>
+									</java>
+								</target>
+							</configuration>
+							<goals>
+								<goal>run</goal>
+							</goals>
+						</execution>
+					</executions>
+					<dependencies>
+						<dependency>
+							<groupId>io.gitlab.arturbosch.detekt</groupId>
+							<artifactId>detekt-cli</artifactId>
+							<version>1.23.8</version>
+						</dependency>
+					</dependencies>
+				</plugin>
+			</plugins>
+		</pluginManagement>
+	</build>
+</project>
