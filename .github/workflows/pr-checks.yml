@@ -6,7 +6,6 @@ on:
   push:
     branches: [ main, master, develop ]
 
-# Required for posting PR comments
 permissions:
   contents: read
   pull-requests: write
@@ -30,13 +29,98 @@ jobs:
       - name: Build and Test
         run: ./mvnw clean test -pl app
 
-      - name: Publish Test Results
-        uses: EnricoMi/publish-unit-test-result-action@v2
+      - name: Generate Test Summary
         if: always()
-        with:
-          files: '**/target/surefire-reports/*.xml'
-          comment_mode: 'off'
-          job_summary: true
+        run: |
+          echo "## 🧪 Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Find test report files
+          if [ -d "app/target/surefire-reports" ]; then
+            total_tests=0
+            passed_tests=0
+            failed_tests=0
+            skipped_tests=0
+
+            # Parse XML reports
+            for xml in app/target/surefire-reports/*.xml; do
+              if [ -f "$xml" ]; then
+                tests=$(grep -oP 'tests="\K[0-9]+' "$xml" | head -1 || echo "0")
+                failures=$(grep -oP 'failures="\K[0-9]+' "$xml" | head -1 || echo "0")
+                errors=$(grep -oP 'errors="\K[0-9]+' "$xml" | head -1 || echo "0")
+                skipped=$(grep -oP 'skipped="\K[0-9]+' "$xml" | head -1 || echo "0")
+
+                total_tests=$((total_tests + tests))
+                failed_tests=$((failed_tests + failures + errors))
+                skipped_tests=$((skipped_tests + skipped))
+              fi
+            done
+
+            passed_tests=$((total_tests - failed_tests - skipped_tests))
+
+            if [ "$failed_tests" -gt 0 ]; then
+              echo "### ❌ Tests Failed" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "### ✅ All Tests Passed" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| ✅ Passed | $passed_tests |" >> $GITHUB_STEP_SUMMARY
+            echo "| ❌ Failed | $failed_tests |" >> $GITHUB_STEP_SUMMARY
+            echo "| ⏭️ Skipped | $skipped_tests |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Total** | **$total_tests** |" >> $GITHUB_STEP_SUMMARY
+
+            # Show failed tests details
+            if [ "$failed_tests" -gt 0 ]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "### Failed Tests" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+
+              for txt in app/target/surefire-reports/*.txt; do
+                if [ -f "$txt" ] && grep -q "FAILURE\|ERROR" "$txt" 2>/dev/null; then
+                  testname=$(basename "$txt" .txt)
+                  echo "<details>" >> $GITHUB_STEP_SUMMARY
+                  echo "<summary>❌ $testname</summary>" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo '```' >> $GITHUB_STEP_SUMMARY
+                  cat "$txt" | head -100 >> $GITHUB_STEP_SUMMARY
+                  echo '```' >> $GITHUB_STEP_SUMMARY
+                  echo "</details>" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                fi
+              done
+            fi
+
+            # Show test classes summary
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Test Classes" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Class | Tests | Status |" >> $GITHUB_STEP_SUMMARY
+            echo "|-------|-------|--------|" >> $GITHUB_STEP_SUMMARY
+
+            for xml in app/target/surefire-reports/TEST-*.xml; do
+              if [ -f "$xml" ]; then
+                classname=$(grep -oP 'name="\K[^"]+' "$xml" | head -1)
+                tests=$(grep -oP 'tests="\K[0-9]+' "$xml" | head -1 || echo "0")
+                failures=$(grep -oP 'failures="\K[0-9]+' "$xml" | head -1 || echo "0")
+                errors=$(grep -oP 'errors="\K[0-9]+' "$xml" | head -1 || echo "0")
+
+                if [ "$((failures + errors))" -gt 0 ]; then
+                  status="❌ Failed"
+                else
+                  status="✅ Passed"
+                fi
+
+                # Shorten class name for readability
+                shortname=$(echo "$classname" | sed 's/.*\.//')
+                echo "| \`$shortname\` | $tests | $status |" >> $GITHUB_STEP_SUMMARY
+              fi
+            done
+          else
+            echo "### ⚠️ No test reports found" >> $GITHUB_STEP_SUMMARY
+          fi
 
   ktlint:
     runs-on: ubuntu-latest
@@ -59,43 +143,32 @@ jobs:
           echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
         continue-on-error: true
 
-      - name: Generate ktlint summary
+      - name: Generate ktlint Summary
         if: always()
         run: |
-          echo "## 🔍 ktlint Code Style Check" >> $GITHUB_STEP_SUMMARY
+          echo "## 🎨 ktlint Code Style" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           if [ -f ktlint-output.txt ]; then
-            # Count issues
-            issue_count=$(grep -c '\.kt:[0-9]*:[0-9]*:' ktlint-output.txt || echo "0")
+            issue_count=$(grep -c '\.kt:[0-9]*:[0-9]*:' ktlint-output.txt 2>/dev/null || echo "0")
 
             if [ "$issue_count" -gt 0 ]; then
-              echo "### ❌ Found $issue_count code style issues" >> $GITHUB_STEP_SUMMARY
+              echo "### ❌ Found $issue_count style issues" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
-              echo "<details>" >> $GITHUB_STEP_SUMMARY
-              echo "<summary>Click to expand issues</summary>" >> $GITHUB_STEP_SUMMARY
-              echo "" >> $GITHUB_STEP_SUMMARY
-              echo "| File | Line | Rule | Message |" >> $GITHUB_STEP_SUMMARY
-              echo "|------|------|------|---------|" >> $GITHUB_STEP_SUMMARY
+              echo "| File | Line | Issue |" >> $GITHUB_STEP_SUMMARY
+              echo "|------|------|-------|" >> $GITHUB_STEP_SUMMARY
 
-              grep '\.kt:[0-9]*:[0-9]*:' ktlint-output.txt | head -50 | while read -r line; do
-                # Parse: src/path/File.kt:10:1: Message (rule)
-                file=$(echo "$line" | sed 's/:.*//')
-                location=$(echo "$line" | grep -oP ':\d+:\d+' | head -1 | tr -d ':' | head -c 10)
-                message=$(echo "$line" | sed 's/.*:[0-9]*:[0-9]*: //' | sed 's/ (.*)//')
-                rule=$(echo "$line" | grep -oP '\([^)]+\)$' | tr -d '()')
-                echo "| \`$file\` | $location | \`$rule\` | $message |" >> $GITHUB_STEP_SUMMARY
+              grep '\.kt:[0-9]*:[0-9]*:' ktlint-output.txt | head -30 | while read -r line; do
+                file=$(echo "$line" | cut -d: -f1 | xargs basename)
+                linenum=$(echo "$line" | cut -d: -f2)
+                msg=$(echo "$line" | cut -d: -f4- | sed 's/^ //')
+                echo "| \`$file\` | $linenum | $msg |" >> $GITHUB_STEP_SUMMARY
               done
 
               echo "" >> $GITHUB_STEP_SUMMARY
-              echo "</details>" >> $GITHUB_STEP_SUMMARY
-              echo "" >> $GITHUB_STEP_SUMMARY
-              echo "### 🔧 How to fix" >> $GITHUB_STEP_SUMMARY
-              echo '```bash' >> $GITHUB_STEP_SUMMARY
-              echo './mvnw exec:exec@ktlint-format -pl app' >> $GITHUB_STEP_SUMMARY
-              echo '```' >> $GITHUB_STEP_SUMMARY
+              echo "**Fix command:** \`./mvnw exec:exec@ktlint-format -pl app\`" >> $GITHUB_STEP_SUMMARY
             else
-              echo "### ✅ No code style issues found" >> $GITHUB_STEP_SUMMARY
+              echo "### ✅ No style issues found" >> $GITHUB_STEP_SUMMARY
             fi
           fi
 
@@ -120,129 +193,78 @@ jobs:
       - name: Run detekt
         id: detekt
         run: |
-          # Run detekt and capture output
           ./mvnw antrun:run@detekt -pl app 2>&1 | tee detekt-output.txt
           echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
         continue-on-error: true
 
-      - name: Generate detekt summary
+      - name: Generate detekt Summary
         if: always()
         run: |
-          echo "## 🔬 detekt Static Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔍 detekt Code Analysis" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           if [ -f detekt-output.txt ]; then
-            # Extract issues
-            grep '\[detekt\].*\[' detekt-output.txt | grep '\.kt:' > detekt-issues.txt || true
-            issue_count=$(wc -l < detekt-issues.txt | tr -d ' ')
+            grep '\[detekt\].*\[' detekt-output.txt | grep '\.kt:' > detekt-issues.txt 2>/dev/null || true
+            issue_count=$(wc -l < detekt-issues.txt 2>/dev/null | tr -d ' ' || echo "0")
 
-            if [ "$issue_count" -gt 0 ]; then
+            if [ "$issue_count" -gt 0 ] && [ "$issue_count" != "0" ]; then
               echo "### ⚠️ Found $issue_count code quality issues" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
 
-              # Count by type
-              echo "### 📊 Summary by Type" >> $GITHUB_STEP_SUMMARY
-              echo "" >> $GITHUB_STEP_SUMMARY
-              echo "| Rule | Count | Severity |" >> $GITHUB_STEP_SUMMARY
-              echo "|------|-------|----------|" >> $GITHUB_STEP_SUMMARY
+              # Summary table
+              echo "| Category | Count | Severity |" >> $GITHUB_STEP_SUMMARY
+              echo "|----------|-------|----------|" >> $GITHUB_STEP_SUMMARY
 
               grep -oP '\[\w+\]$' detekt-issues.txt | sort | uniq -c | sort -rn | while read -r count rule; do
                 rule_name=$(echo "$rule" | tr -d '[]')
-                severity="⚠️ Warning"
                 case "$rule_name" in
-                  TooGenericExceptionCaught|SwallowedException) severity="🔴 High" ;;
-                  UnusedParameter|MagicNumber) severity="🟡 Medium" ;;
-                  *) severity="🟢 Low" ;;
+                  TooGenericExceptionCaught|SwallowedException) sev="🔴 High" ;;
+                  UnusedParameter|ReturnCount) sev="🟡 Medium" ;;
+                  MagicNumber|SpreadOperator) sev="🟢 Low" ;;
+                  *) sev="⚪ Info" ;;
                 esac
-                echo "| \`$rule_name\` | $count | $severity |" >> $GITHUB_STEP_SUMMARY
+                echo "| \`$rule_name\` | $count | $sev |" >> $GITHUB_STEP_SUMMARY
               done
 
               echo "" >> $GITHUB_STEP_SUMMARY
-              echo "### 📝 Issues by File" >> $GITHUB_STEP_SUMMARY
+              echo "### Issues by File" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
 
               # Group by file
-              for file in $(grep -oP '/[^:]+\.kt' detekt-issues.txt | sort -u); do
-                filename=$(basename "$file")
-                file_issues=$(grep "$file" detekt-issues.txt | wc -l)
-                echo "<details>" >> $GITHUB_STEP_SUMMARY
-                echo "<summary><code>$filename</code> ($file_issues issues)</summary>" >> $GITHUB_STEP_SUMMARY
-                echo "" >> $GITHUB_STEP_SUMMARY
-                echo "| Line | Rule | Message |" >> $GITHUB_STEP_SUMMARY
-                echo "|------|------|---------|" >> $GITHUB_STEP_SUMMARY
+              for filepath in $(grep -oP '/[^:]+\.kt' detekt-issues.txt | sort -u); do
+                filename=$(basename "$filepath")
+                count=$(grep "$filepath" detekt-issues.txt | wc -l)
 
-                grep "$file" detekt-issues.txt | while read -r line; do
-                  line_num=$(echo "$line" | grep -oP '\.kt:\d+' | grep -oP '\d+')
+                echo "<details>" >> $GITHUB_STEP_SUMMARY
+                echo "<summary><code>$filename</code> — $count issues</summary>" >> $GITHUB_STEP_SUMMARY
+                echo "" >> $GITHUB_STEP_SUMMARY
+                echo "| Line | Rule | Description |" >> $GITHUB_STEP_SUMMARY
+                echo "|------|------|-------------|" >> $GITHUB_STEP_SUMMARY
+
+                grep "$filepath" detekt-issues.txt | while read -r line; do
+                  linenum=$(echo "$line" | grep -oP '\.kt:\K\d+')
                   rule=$(echo "$line" | grep -oP '\[\w+\]$' | tr -d '[]')
-                  message=$(echo "$line" | sed 's/.*\.kt:[0-9]*:[0-9]*: //' | sed 's/ \[.*$//')
-                  echo "| $line_num | \`$rule\` | $message |" >> $GITHUB_STEP_SUMMARY
+                  desc=$(echo "$line" | sed 's/.*\.kt:[0-9]*:[0-9]*: //' | sed 's/ \[.*$//' | head -c 80)
+                  echo "| $linenum | \`$rule\` | $desc |" >> $GITHUB_STEP_SUMMARY
                 done
 
                 echo "" >> $GITHUB_STEP_SUMMARY
                 echo "</details>" >> $GITHUB_STEP_SUMMARY
-                echo "" >> $GITHUB_STEP_SUMMARY
               done
 
-              echo "### 🔧 How to fix" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
-              echo "Run locally to see full report:" >> $GITHUB_STEP_SUMMARY
-              echo '```bash' >> $GITHUB_STEP_SUMMARY
-              echo './mvnw antrun:run@detekt -pl app' >> $GITHUB_STEP_SUMMARY
-              echo '```' >> $GITHUB_STEP_SUMMARY
+              echo "**Local check:** \`./mvnw antrun:run@detekt -pl app\`" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
-              echo "📚 [detekt Rules Documentation](https://detekt.dev/docs/rules/style)" >> $GITHUB_STEP_SUMMARY
+              echo "📚 [detekt Rules](https://detekt.dev/docs/rules/style)" >> $GITHUB_STEP_SUMMARY
             else
               echo "### ✅ No code quality issues found" >> $GITHUB_STEP_SUMMARY
             fi
           fi
 
-      - name: Upload detekt report
+      - name: Upload detekt Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: detekt-report
           path: '**/target/reports/detekt.xml'
           if-no-files-found: ignore
-
-      # Optional: Post PR comment (requires permissions)
-      - name: Comment on PR
-        if: github.event_name == 'pull_request' && always()
-        uses: actions/github-script@v7
-        continue-on-error: true
-        with:
-          script: |
-            const fs = require('fs');
-
-            if (!fs.existsSync('detekt-issues.txt')) return;
-
-            const issues = fs.readFileSync('detekt-issues.txt', 'utf8').trim().split('\n').filter(Boolean);
-            if (issues.length === 0) return;
-
-            // Count by type
-            const counts = {};
-            issues.forEach(line => {
-              const match = line.match(/\[(\w+)\]$/);
-              if (match) counts[match[1]] = (counts[match[1]] || 0) + 1;
-            });
-
-            const summary = Object.entries(counts)
-              .sort((a, b) => b[1] - a[1])
-              .map(([rule, count]) => `| \`${rule}\` | ${count} |`)
-              .join('\n');
-
-            const body = `## 🔬 detekt Analysis Results
-
-            Found **${issues.length}** code quality issues.
-
-            | Rule | Count |
-            |------|-------|
-            ${summary}
-
-            📋 See the [Job Summary](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}) for full details.`;
-
-            await github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: body
-            });
