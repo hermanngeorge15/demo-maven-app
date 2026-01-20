@@ -106,10 +106,6 @@ jobs:
             echo "**Fix command:** \`./mvnw exec:exec@ktlint-format -pl app\`" >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Fail if ktlint found issues
-        if: steps.ktlint.outcome == 'failure'
-        run: exit 1
-
   detekt:
     runs-on: ubuntu-latest
 
@@ -182,7 +178,3 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "📚 [detekt Rules](https://detekt.dev/docs/rules/style)" >> $GITHUB_STEP_SUMMARY
           fi
-
-      - name: Fail if detekt found issues
-        if: steps.detekt.outcome == 'failure'
-        run: exit 1

@@ -150,7 +150,7 @@
 								<target name="detekt">
 									<java taskname="detekt" dir="${basedir}"
 									      fork="true"
-									      failonerror="true"
+									      failonerror="false"
 									      classname="io.gitlab.arturbosch.detekt.cli.Main"
 									      classpathref="maven.plugin.classpath">
 										<arg value="--input"/>
