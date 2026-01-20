@@ -151,30 +151,21 @@ jobs:
           echo "## 🔍 detekt Code Analysis" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          if [ -f app/target/reports/detekt.html ]; then
-            echo "✅ HTML report generated - download from Artifacts" >> $GITHUB_STEP_SUMMARY
-          fi
+          if [ -f app/target/reports/detekt.md ]; then
+            # Extract issue count from "## Findings (N)" line
+            issue_count=$(grep -oP '## Findings \(\K\d+' app/target/reports/detekt.md 2>/dev/null || echo "0")
 
-          if [ "${{ steps.detekt.outcome }}" == "success" ]; then
-            echo "### ✅ No code quality issues found" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "### ⚠️ Code quality issues detected" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-
-            # Include markdown report if available
-            if [ -f app/target/reports/detekt.md ]; then
-              echo "<details>" >> $GITHUB_STEP_SUMMARY
-              echo "<summary>📋 View detekt findings</summary>" >> $GITHUB_STEP_SUMMARY
-              echo "" >> $GITHUB_STEP_SUMMARY
-              cat app/target/reports/detekt.md >> $GITHUB_STEP_SUMMARY
-              echo "" >> $GITHUB_STEP_SUMMARY
-              echo "</details>" >> $GITHUB_STEP_SUMMARY
+            if [ "$issue_count" -gt 0 ]; then
+              echo "### ⚠️ Found $issue_count code quality issues" >> $GITHUB_STEP_SUMMARY
             else
-              echo "📥 Download the **detekt-html-report** artifact for details" >> $GITHUB_STEP_SUMMARY
+              echo "### ✅ No code quality issues found" >> $GITHUB_STEP_SUMMARY
             fi
 
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Local check:** \`./mvnw antrun:run@detekt -pl app\`" >> $GITHUB_STEP_SUMMARY
+            cat app/target/reports/detekt.md >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "📚 [detekt Rules](https://detekt.dev/docs/rules/style)" >> $GITHUB_STEP_SUMMARY
+            echo "---" >> $GITHUB_STEP_SUMMARY
+            echo "**Local check:** \`./mvnw antrun:run@detekt -pl app\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ⚠️ No detekt report generated" >> $GITHUB_STEP_SUMMARY
           fi
