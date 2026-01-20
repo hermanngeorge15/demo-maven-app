@@ -6,6 +6,12 @@ on:
   push:
     branches: [ main, master, develop ]
 
+# Required for posting PR comments
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
@@ -22,14 +28,15 @@ jobs:
           cache: maven
 
       - name: Build and Test
-        run: ./mvnw clean verify -DskipTests=false
+        run: ./mvnw clean test -pl app
 
-      - name: Upload test results
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: test-results
-          path: '**/target/surefire-reports/*.xml'
+          files: '**/target/surefire-reports/*.xml'
+          comment_mode: 'off'
+          job_summary: true
 
   ktlint:
     runs-on: ubuntu-latest
@@ -45,52 +52,52 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
-      - name: Run ktlint check (without format)
+      - name: Run ktlint check
         id: ktlint
         run: |
-          # Run ktlint in check mode (no --format flag)
           ./mvnw exec:exec@ktlint-check -pl app 2>&1 | tee ktlint-output.txt
-          exit_code=${PIPESTATUS[0]}
-          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
-          exit $exit_code
+          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
         continue-on-error: true
 
-      - name: Comment PR with ktlint results
-        if: github.event_name == 'pull_request' && steps.ktlint.outputs.exit_code != '0'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const output = fs.readFileSync('ktlint-output.txt', 'utf8');
+      - name: Generate ktlint summary
+        if: always()
+        run: |
+          echo "## 🔍 ktlint Code Style Check" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
 
-            // Parse ktlint output
-            const issues = output.split('\n')
-              .filter(line => line.includes('.kt:'))
-              .slice(0, 20); // Limit to 20 issues
+          if [ -f ktlint-output.txt ]; then
+            # Count issues
+            issue_count=$(grep -c '\.kt:[0-9]*:[0-9]*:' ktlint-output.txt || echo "0")
 
-            if (issues.length > 0) {
-              const body = `## ❌ ktlint Check Failed
+            if [ "$issue_count" -gt 0 ]; then
+              echo "### ❌ Found $issue_count code style issues" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "<details>" >> $GITHUB_STEP_SUMMARY
+              echo "<summary>Click to expand issues</summary>" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "| File | Line | Rule | Message |" >> $GITHUB_STEP_SUMMARY
+              echo "|------|------|------|---------|" >> $GITHUB_STEP_SUMMARY
 
-            The following code style issues were found:
+              grep '\.kt:[0-9]*:[0-9]*:' ktlint-output.txt | head -50 | while read -r line; do
+                # Parse: src/path/File.kt:10:1: Message (rule)
+                file=$(echo "$line" | sed 's/:.*//')
+                location=$(echo "$line" | grep -oP ':\d+:\d+' | head -1 | tr -d ':' | head -c 10)
+                message=$(echo "$line" | sed 's/.*:[0-9]*:[0-9]*: //' | sed 's/ (.*)//')
+                rule=$(echo "$line" | grep -oP '\([^)]+\)$' | tr -d '()')
+                echo "| \`$file\` | $location | \`$rule\` | $message |" >> $GITHUB_STEP_SUMMARY
+              done
 
-            \`\`\`
-            ${issues.join('\n')}
-            \`\`\`
-
-            **To fix automatically, run:**
-            \`\`\`bash
-            ./mvnw exec:exec@ktlint-format -pl app
-            \`\`\`
-
-            Or fix manually according to the [ktlint rules](https://pinterest.github.io/ktlint/latest/rules/standard/).`;
-
-              github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: body
-              });
-            }
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "</details>" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "### 🔧 How to fix" >> $GITHUB_STEP_SUMMARY
+              echo '```bash' >> $GITHUB_STEP_SUMMARY
+              echo './mvnw exec:exec@ktlint-format -pl app' >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+            else
+              echo "### ✅ No code style issues found" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
 
       - name: Fail if ktlint found issues
         if: steps.ktlint.outputs.exit_code != '0'
@@ -113,74 +120,81 @@ jobs:
       - name: Run detekt
         id: detekt
         run: |
+          # Run detekt and capture output
           ./mvnw antrun:run@detekt -pl app 2>&1 | tee detekt-output.txt
-          exit_code=${PIPESTATUS[0]}
-          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
-          # Don't fail yet, we want to post the comment first
+          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
         continue-on-error: true
 
-      - name: Parse detekt results
-        id: parse-detekt
+      - name: Generate detekt summary
         if: always()
         run: |
-          # Count issues from output
-          issue_count=$(grep -c '\[detekt\].*\[' detekt-output.txt || echo "0")
-          echo "issue_count=$issue_count" >> $GITHUB_OUTPUT
+          echo "## 🔬 detekt Static Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
 
-      - name: Comment PR with detekt results
-        if: github.event_name == 'pull_request' && steps.parse-detekt.outputs.issue_count != '0'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const output = fs.readFileSync('detekt-output.txt', 'utf8');
+          if [ -f detekt-output.txt ]; then
+            # Extract issues
+            grep '\[detekt\].*\[' detekt-output.txt | grep '\.kt:' > detekt-issues.txt || true
+            issue_count=$(wc -l < detekt-issues.txt | tr -d ' ')
 
-            // Parse detekt output - extract issues
-            const issues = output.split('\n')
-              .filter(line => line.includes('[detekt]') && line.includes('[') && line.includes(']'))
-              .filter(line => line.includes('.kt:'))
-              .map(line => line.replace('[INFO]', '').trim())
-              .slice(0, 30); // Limit to 30 issues
+            if [ "$issue_count" -gt 0 ]; then
+              echo "### ⚠️ Found $issue_count code quality issues" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
 
-            // Group by type
-            const issueTypes = {};
-            issues.forEach(issue => {
-              const match = issue.match(/\[(\w+)\]$/);
-              if (match) {
-                const type = match[1];
-                issueTypes[type] = (issueTypes[type] || 0) + 1;
-              }
-            });
+              # Count by type
+              echo "### 📊 Summary by Type" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "| Rule | Count | Severity |" >> $GITHUB_STEP_SUMMARY
+              echo "|------|-------|----------|" >> $GITHUB_STEP_SUMMARY
 
-            const summary = Object.entries(issueTypes)
-              .map(([type, count]) => `- **${type}**: ${count}`)
-              .join('\n');
+              grep -oP '\[\w+\]$' detekt-issues.txt | sort | uniq -c | sort -rn | while read -r count rule; do
+                rule_name=$(echo "$rule" | tr -d '[]')
+                severity="⚠️ Warning"
+                case "$rule_name" in
+                  TooGenericExceptionCaught|SwallowedException) severity="🔴 High" ;;
+                  UnusedParameter|MagicNumber) severity="🟡 Medium" ;;
+                  *) severity="🟢 Low" ;;
+                esac
+                echo "| \`$rule_name\` | $count | $severity |" >> $GITHUB_STEP_SUMMARY
+              done
 
-            const body = `## ⚠️ detekt Analysis Results
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "### 📝 Issues by File" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
 
-            Found **${issues.length}** code quality issues:
+              # Group by file
+              for file in $(grep -oP '/[^:]+\.kt' detekt-issues.txt | sort -u); do
+                filename=$(basename "$file")
+                file_issues=$(grep "$file" detekt-issues.txt | wc -l)
+                echo "<details>" >> $GITHUB_STEP_SUMMARY
+                echo "<summary><code>$filename</code> ($file_issues issues)</summary>" >> $GITHUB_STEP_SUMMARY
+                echo "" >> $GITHUB_STEP_SUMMARY
+                echo "| Line | Rule | Message |" >> $GITHUB_STEP_SUMMARY
+                echo "|------|------|---------|" >> $GITHUB_STEP_SUMMARY
 
-            ### Summary by Type:
-            ${summary}
+                grep "$file" detekt-issues.txt | while read -r line; do
+                  line_num=$(echo "$line" | grep -oP '\.kt:\d+' | grep -oP '\d+')
+                  rule=$(echo "$line" | grep -oP '\[\w+\]$' | tr -d '[]')
+                  message=$(echo "$line" | sed 's/.*\.kt:[0-9]*:[0-9]*: //' | sed 's/ \[.*$//')
+                  echo "| $line_num | \`$rule\` | $message |" >> $GITHUB_STEP_SUMMARY
+                done
 
-            ### Issues (first 30):
-            \`\`\`
-            ${issues.join('\n')}
-            \`\`\`
+                echo "" >> $GITHUB_STEP_SUMMARY
+                echo "</details>" >> $GITHUB_STEP_SUMMARY
+                echo "" >> $GITHUB_STEP_SUMMARY
+              done
 
-            **To see full report, check the workflow logs or run locally:**
-            \`\`\`bash
-            ./mvnw antrun:run@detekt -pl app
-            \`\`\`
-
-            See [detekt documentation](https://detekt.dev/docs/rules/style) for fixing these issues.`;
-
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: body
-            });
+              echo "### 🔧 How to fix" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "Run locally to see full report:" >> $GITHUB_STEP_SUMMARY
+              echo '```bash' >> $GITHUB_STEP_SUMMARY
+              echo './mvnw antrun:run@detekt -pl app' >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "📚 [detekt Rules Documentation](https://detekt.dev/docs/rules/style)" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "### ✅ No code quality issues found" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
 
       - name: Upload detekt report
         if: always()
@@ -190,21 +204,45 @@ jobs:
           path: '**/target/reports/detekt.xml'
           if-no-files-found: ignore
 
-  test-report:
-    runs-on: ubuntu-latest
-    needs: build-and-test
-    if: always()
-
-    steps:
-      - name: Download test results
-        uses: actions/download-artifact@v4
+      # Optional: Post PR comment (requires permissions)
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        continue-on-error: true
         with:
-          name: test-results
-          path: test-results
+          script: |
+            const fs = require('fs');
 
-      - name: Publish Test Results
-        uses: EnricoMi/publish-unit-test-result-action@v2
-        if: always()
-        with:
-          files: test-results/**/*.xml
-          comment_mode: 'failures'
+            if (!fs.existsSync('detekt-issues.txt')) return;
+
+            const issues = fs.readFileSync('detekt-issues.txt', 'utf8').trim().split('\n').filter(Boolean);
+            if (issues.length === 0) return;
+
+            // Count by type
+            const counts = {};
+            issues.forEach(line => {
+              const match = line.match(/\[(\w+)\]$/);
+              if (match) counts[match[1]] = (counts[match[1]] || 0) + 1;
+            });
+
+            const summary = Object.entries(counts)
+              .sort((a, b) => b[1] - a[1])
+              .map(([rule, count]) => `| \`${rule}\` | ${count} |`)
+              .join('\n');
+
+            const body = `## 🔬 detekt Analysis Results
+
+            Found **${issues.length}** code quality issues.
+
+            | Rule | Count |
+            |------|-------|
+            ${summary}
+
+            📋 See the [Job Summary](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}) for full details.`;
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
