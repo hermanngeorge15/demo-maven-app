@@ -11,8 +11,6 @@ permissions:
   pull-requests: write
   checks: write
   security-events: write
-  pages: write
-  id-token: write
 
 jobs:
   build-and-test:
@@ -72,14 +70,12 @@ jobs:
           ./mvnw exec:exec@ktlint-check -pl app 2>&1 | tee app/target/reports/ktlint.txt
         continue-on-error: true
 
-      - name: Upload ktlint reports
+      - name: Upload ktlint HTML Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ktlint-reports
-          path: |
-            app/target/reports/ktlint.html
-            app/target/reports/ktlint.txt
+          name: ktlint-report
+          path: app/target/reports/ktlint.html
           if-no-files-found: ignore
 
       - name: Upload ktlint SARIF to GitHub Security
@@ -101,6 +97,8 @@ jobs:
 
             if [ "$issue_count" -gt 0 ]; then
               echo "### ⚠️ Found $issue_count style issues" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "📥 **Download HTML report from Artifacts for detailed view**" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
               echo "| File | Line | Column | Issue |" >> $GITHUB_STEP_SUMMARY
               echo "|------|------|--------|-------|" >> $GITHUB_STEP_SUMMARY
@@ -146,14 +144,12 @@ jobs:
           ./mvnw antrun:run@detekt -pl app
         continue-on-error: true
 
-      - name: Upload detekt reports
+      - name: Upload detekt HTML Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: detekt-reports
-          path: |
-            app/target/reports/detekt.html
-            app/target/reports/detekt.md
+          name: detekt-report
+          path: app/target/reports/detekt.html
           if-no-files-found: ignore
 
       - name: Upload detekt SARIF to GitHub Security
@@ -175,6 +171,8 @@ jobs:
 
             if [ "$issue_count" -gt 0 ]; then
               echo "### ⚠️ Found $issue_count code quality issues" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "📥 **Download HTML report from Artifacts for detailed view**" >> $GITHUB_STEP_SUMMARY
             else
               echo "### ✅ No code quality issues found" >> $GITHUB_STEP_SUMMARY
             fi
@@ -187,76 +185,3 @@ jobs:
           else
             echo "### ⚠️ No detekt report generated" >> $GITHUB_STEP_SUMMARY
           fi
-
-  # Deploy HTML reports to GitHub Pages
-  deploy-reports:
-    runs-on: ubuntu-latest
-    needs: [ktlint, detekt]
-    if: always()
-
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
-    steps:
-      - name: Download ktlint reports
-        uses: actions/download-artifact@v4
-        with:
-          name: ktlint-reports
-          path: reports/ktlint
-        continue-on-error: true
-
-      - name: Download detekt reports
-        uses: actions/download-artifact@v4
-        with:
-          name: detekt-reports
-          path: reports/detekt
-        continue-on-error: true
-
-      - name: Create index page
-        run: |
-          cat > reports/index.html << 'EOF'
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <title>Code Quality Reports</title>
-            <style>
-              body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
-              h1 { color: #333; }
-              .report-link { display: block; padding: 15px; margin: 10px 0; background: #f5f5f5; border-radius: 8px; text-decoration: none; color: #0366d6; }
-              .report-link:hover { background: #e8e8e8; }
-              .timestamp { color: #666; font-size: 0.9em; }
-            </style>
-          </head>
-          <body>
-            <h1>📊 Code Quality Reports</h1>
-            <p class="timestamp">Generated: TIMESTAMP</p>
-            <a class="report-link" href="ktlint/ktlint.html">🎨 ktlint - Code Style Report</a>
-            <a class="report-link" href="detekt/detekt.html">🔍 detekt - Code Analysis Report</a>
-          </body>
-          </html>
-          EOF
-          sed -i "s/TIMESTAMP/$(date -u '+%Y-%m-%d %H:%M:%S UTC')/" reports/index.html
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-        with:
-          enablement: true
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: reports
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-
-      - name: Add report links to summary
-        run: |
-          echo "## 📊 HTML Reports" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "View the full HTML reports:" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- 🎨 [ktlint Report](${{ steps.deployment.outputs.page_url }}ktlint/ktlint.html)" >> $GITHUB_STEP_SUMMARY
-          echo "- 🔍 [detekt Report](${{ steps.deployment.outputs.page_url }}detekt/detekt.html)" >> $GITHUB_STEP_SUMMARY
