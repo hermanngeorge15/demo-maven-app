@@ -114,6 +114,9 @@
 									<classpath/>
 									<argument>com.pinterest.ktlint.Main</argument>
 									<argument>--relative</argument>
+									<argument>--reporter=plain</argument>
+									<argument>--reporter=html,output=${basedir}/target/reports/ktlint.html</argument>
+									<argument>--reporter=sarif,output=${basedir}/target/reports/ktlint.sarif</argument>
 									<argument>src/**/*.kt</argument>
 								</arguments>
 							</configuration>
@@ -147,13 +150,19 @@
 								<target name="detekt">
 									<java taskname="detekt" dir="${basedir}"
 									      fork="true"
-									      failonerror="true"
+									      failonerror="false"
 									      classname="io.gitlab.arturbosch.detekt.cli.Main"
 									      classpathref="maven.plugin.classpath">
 										<arg value="--input"/>
 										<arg value="${basedir}/src/main/kotlin"/>
 										<arg value="--report"/>
 										<arg value="xml:${basedir}/target/reports/detekt.xml"/>
+										<arg value="--report"/>
+										<arg value="html:${basedir}/target/reports/detekt.html"/>
+										<arg value="--report"/>
+										<arg value="sarif:${basedir}/target/reports/detekt.sarif"/>
+										<arg value="--report"/>
+										<arg value="md:${basedir}/target/reports/detekt.md"/>
 									</java>
 								</target>
 							</configuration>

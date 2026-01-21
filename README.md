@@ -53,6 +53,12 @@ ktlint automatically formats Kotlin code during the build.
 ./mvnw exec:exec@ktlint-check -pl app
 ```
 
+**Reports generated:**
+| Format | Location |
+|--------|----------|
+| HTML | `app/target/reports/ktlint.html` |
+| SARIF | `app/target/reports/ktlint.sarif` |
+
 **Rules enforced:**
 - No wildcard imports
 - Consistent indentation
@@ -71,7 +77,13 @@ detekt analyzes code for potential issues and code smells.
 ./mvnw verify -pl app
 ```
 
-**Report location:** `app/target/reports/detekt.xml`
+**Reports generated:**
+| Format | Location | Description |
+|--------|----------|-------------|
+| HTML | `app/target/reports/detekt.html` | Full report with code snippets (open in browser) |
+| Markdown | `app/target/reports/detekt.md` | Text report with metrics and findings |
+| XML | `app/target/reports/detekt.xml` | Machine-readable format |
+| SARIF | `app/target/reports/detekt.sarif` | For GitHub Code Scanning |
 
 **Rules enforced:**
 - Magic numbers
@@ -80,6 +92,28 @@ detekt analyzes code for potential issues and code smells.
 - Unused parameters
 - Generic exception handling
 - And more...
+
+### Quick Commands Reference
+
+```bash
+# Run all code quality checks
+./mvnw exec:exec@ktlint-check antrun:run@detekt -pl app
+
+# Auto-fix ktlint issues
+./mvnw exec:exec@ktlint-format -pl app
+
+# View HTML reports (macOS)
+open app/target/reports/detekt.html
+open app/target/reports/ktlint.html
+
+# View HTML reports (Linux)
+xdg-open app/target/reports/detekt.html
+xdg-open app/target/reports/ktlint.html
+
+# View HTML reports (Windows)
+start app/target/reports/detekt.html
+start app/target/reports/ktlint.html
+```
 
 ## API Endpoints
 
